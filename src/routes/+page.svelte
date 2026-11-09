@@ -151,6 +151,14 @@
   import TimelineView from "$lib/TimelineView.svelte";
   import { colorSchemeOptions, isColorScheme, type ColorScheme } from "$lib/color-schemes";
   import {
+    t,
+    LANGUAGE_OPTIONS,
+    isLanguageCode,
+    getLanguage,
+    setLanguage,
+    type LanguageCode
+  } from "$lib/i18n";
+  import {
     isMarkdownFontPreference,
     isRichTextFontPreference,
     listSystemFontFamilies,
@@ -508,6 +516,11 @@
   let themePreference = $state<ThemePreference>("system");
   let resolvedTheme = $state<"light" | "dark">("light");
   let colorScheme = $state<ColorScheme>("poligonal");
+  let appLanguage = $state<LanguageCode>(getLanguage());
+  function setAppLanguage(value: LanguageCode) {
+    setLanguage(value);
+    appLanguage = value;
+  }
   let richTextFontPreference = $state<RichTextFontPreference>("serif");
   let markdownFontPreference = $state<MarkdownFontPreference>("sf-mono");
   let richTextSystemFont = $state("");
@@ -7806,6 +7819,10 @@
       if (isColorScheme(savedColorScheme)) {
         colorScheme = savedColorScheme;
       }
+      const savedLanguage = localStorage.getItem("prosecraft-language");
+      if (isLanguageCode(savedLanguage)) {
+        setAppLanguage(savedLanguage);
+      }
       const savedFont = localStorage.getItem(fontStorageKey);
       if (isRichTextFontPreference(savedFont)) {
         richTextFontPreference = savedFont;
@@ -9263,15 +9280,15 @@
     <section class="writing-area" class:storyboard-active={workspaceView === "storyboard"} id="editor">
       <div class="workspace-controls" aria-label="Workspace panels">
         <div class="workspace-modes" role="tablist" aria-label="Workspace view">
-          <button class="workspace-mode" class:active={workspaceView === "outline"} role="tab" aria-selected={workspaceView === "outline"} onclick={openOutlineView}>Outline</button>
-          <button class="workspace-mode" class:active={workspaceView === "writing"} role="tab" aria-selected={workspaceView === "writing"} onclick={() => setWorkspaceView("writing")}>Write</button>
+          <button class="workspace-mode" class:active={workspaceView === "outline"} role="tab" aria-selected={workspaceView === "outline"} onclick={openOutlineView}>{$t('outline')}</button>
+          <button class="workspace-mode" class:active={workspaceView === "writing"} role="tab" aria-selected={workspaceView === "writing"} onclick={() => setWorkspaceView("writing")}>{$t('write')}</button>
           {#if !compactChapterLayout}
-          <button class="workspace-mode" class:active={workspaceView === "storyboard"} role="tab" aria-selected={workspaceView === "storyboard"} onclick={() => setWorkspaceView("storyboard")}>Storyboard</button>
+          <button class="workspace-mode" class:active={workspaceView === "storyboard"} role="tab" aria-selected={workspaceView === "storyboard"} onclick={() => setWorkspaceView("storyboard")}>{$t('storyboard')}</button>
           {/if}
           {#if timelineEnabled}
-          <button class="workspace-mode" class:active={workspaceView === "timeline"} role="tab" aria-selected={workspaceView === "timeline"} onclick={() => setWorkspaceView("timeline")}>Timeline</button>
+          <button class="workspace-mode" class:active={workspaceView === "timeline"} role="tab" aria-selected={workspaceView === "timeline"} onclick={() => setWorkspaceView("timeline")}>{$t('timeline')}</button>
           {/if}
-          <button class="workspace-mode" class:active={workspaceView === "publish"} role="tab" aria-selected={workspaceView === "publish"} onclick={openPublishView}>Publish</button>
+          <button class="workspace-mode" class:active={workspaceView === "publish"} role="tab" aria-selected={workspaceView === "publish"} onclick={openPublishView}>{$t('publish')}</button>
         </div>
         {#if workspaceView === "storyboard"}
           <div class="board-controls" role="toolbar" aria-label="Storyboard tools">
@@ -9956,9 +9973,9 @@
       aria-label="Sidebar"
     >
       <div class="sidebar-tabs" role="tablist" aria-label="Sidebar views">
-        <button type="button" role="tab" class="sidebar-tab" class:active={rightSidebarTab === "progress"} aria-selected={rightSidebarTab === "progress"} onclick={() => (rightSidebarTab = "progress")}>Progress</button>
-        <button type="button" role="tab" class="sidebar-tab" class:active={rightSidebarTab === "comments"} aria-selected={rightSidebarTab === "comments"} onclick={() => (rightSidebarTab = "comments")}>Comments</button>
-        <button type="button" role="tab" class="sidebar-tab" class:active={rightSidebarTab === "snapshots"} aria-selected={rightSidebarTab === "snapshots"} onclick={() => (rightSidebarTab = "snapshots")}>Snapshots</button>
+        <button type="button" role="tab" class="sidebar-tab" class:active={rightSidebarTab === "progress"} aria-selected={rightSidebarTab === "progress"} onclick={() => (rightSidebarTab = "progress")}>{$t('progress')}</button>
+        <button type="button" role="tab" class="sidebar-tab" class:active={rightSidebarTab === "comments"} aria-selected={rightSidebarTab === "comments"} onclick={() => (rightSidebarTab = "comments")}>{$t('comments')}</button>
+        <button type="button" role="tab" class="sidebar-tab" class:active={rightSidebarTab === "snapshots"} aria-selected={rightSidebarTab === "snapshots"} onclick={() => (rightSidebarTab = "snapshots")}>{$t('snapshots')}</button>
         <button class="progress-close" type="button" aria-label="Hide progress sidebar" title="Hide progress sidebar" onclick={() => closeSidebarDrawers()}><X size={15} aria-hidden="true" /></button>
       </div>
 
@@ -10217,6 +10234,20 @@
         }}
       >
         {#each colorSchemeOptions as option (option.value)}
+          <option value={option.value}>{option.label}</option>
+        {/each}
+      </select>
+      <label class="preference-label language-label" for="language-preference">{$t('language')}</label>
+      <select
+        id="language-preference"
+        class="preference-select"
+        value={appLanguage}
+        onchange={(event) => {
+          const value = (event.currentTarget as HTMLSelectElement).value;
+          if (isLanguageCode(value)) setAppLanguage(value);
+        }}
+      >
+        {#each LANGUAGE_OPTIONS as option (option.value)}
           <option value={option.value}>{option.label}</option>
         {/each}
       </select>
