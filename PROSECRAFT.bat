@@ -6,10 +6,10 @@ echo ========================================================
 echo   PROSECRAFT // MANUSCRITO & STORYBOARD (STANDALONE)
 echo ========================================================
 echo.
-echo [+] Abrindo ProseCraft em http://localhost:1421...
+echo [+] Abrindo ProseCraft em http://127.0.0.1:1421...
 echo.
 
-start http://localhost:1421
+start "" "http://127.0.0.1:1421"
 npm run dev
 
 pause

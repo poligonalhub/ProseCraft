@@ -1,4 +1,5 @@
 export type ColorScheme =
+  | "poligonal"
   | "prosecraft"
   | "nord"
   | "gruvbox"
@@ -9,6 +10,7 @@ export type ColorScheme =
   | "dracula";
 
 export const colorSchemeOptions: Array<{ value: ColorScheme; label: string }> = [
+  { value: "poligonal", label: "Poligonal Dark (Prismatic)" },
   { value: "prosecraft", label: "ProseCraft" },
   { value: "nord", label: "Nord" },
   { value: "gruvbox", label: "Gruvbox" },
@@ -40,13 +42,13 @@ export const defaultPreviewPalette: PreviewPalette = {
 };
 
 export const defaultDarkPreviewPalette: PreviewPalette = {
-  desk: "#111411",
-  page: "#20231f",
-  ink: "#e2e5df",
-  muted: "#a1a89b",
-  rule: "#3d4239",
-  border: "#3a3f37",
-  shadow: "0 14px 38px rgba(0, 0, 0, 0.5)"
+  desk: "#060709",
+  page: "#0b0c10",
+  ink: "#f0f2f8",
+  muted: "#8e95a5",
+  rule: "#1c1e2a",
+  border: "rgba(255, 255, 255, 0.08)",
+  shadow: "0 14px 38px rgba(0, 0, 0, 0.7)"
 };
 
 export function isColorScheme(value: string | null): value is ColorScheme {

@@ -6,6 +6,57 @@
  * the shared mapping below turns those into the app's semantic tokens.
  */
 
+
+/* Poligonal - dark (Prismatic Obsidian) */
+html[data-color-scheme="poligonal"][data-theme="dark"],
+html[data-color-scheme="poligonal"] {
+  --p-base0: #060709;
+  --p-base1: #0a0b10;
+  --p-base2: #111219;
+  --p-base3: #181924;
+  --p-fg-strong: #ffffff;
+  --p-fg: #f0f2f8;
+  --p-fg-muted: #8e95a5;
+  --p-fg-faint: #565d6d;
+  --p-accent: #00f0ff;
+  --p-accent-soft: #7928ca;
+  --p-accent-strong: #00f0ff;
+  --p-accent-strong-hover: #00ff9f;
+  --p-accent-contrast: #060709;
+  --p-selected-bg: #1c1e2d;
+  --p-selected-text: #00f0ff;
+  --p-danger: #ff007f;
+  --p-warning: #ffaa00;
+  --p-success: #00ff9f;
+  --p-scrollbar: #1f2130;
+  --p-shadow-rgb: 0, 0, 0;
+  --p-preview-shadow-alpha: 0.75;
+}
+
+/* Poligonal - light */
+html[data-color-scheme="poligonal"][data-theme="light"] {
+  --p-base0: #f4f6fa;
+  --p-base1: #e9ebf3;
+  --p-base2: #ffffff;
+  --p-base3: #ffffff;
+  --p-fg-strong: #060709;
+  --p-fg: #191b24;
+  --p-fg-muted: #565d6d;
+  --p-fg-faint: #8e95a5;
+  --p-accent: #0088cc;
+  --p-accent-soft: #7928ca;
+  --p-accent-strong: #0088cc;
+  --p-accent-strong-hover: #006699;
+  --p-accent-contrast: #ffffff;
+  --p-selected-bg: #e2e8f5;
+  --p-selected-text: #0088cc;
+  --p-danger: #d6006c;
+  --p-warning: #d98200;
+  --p-success: #00aa66;
+  --p-scrollbar: #c8cbd6;
+  --p-shadow-rgb: 6, 7, 9;
+  --p-preview-shadow-alpha: 0.15;
+}
 /* Nord — light */
 html[data-color-scheme="nord"][data-theme="light"] {
   --p-base0: #eceff4;
@@ -31,6 +82,57 @@ html[data-color-scheme="nord"][data-theme="light"] {
   --p-preview-shadow-alpha: 0.12;
 }
 
+
+/* Poligonal - dark (Prismatic Obsidian) */
+html[data-color-scheme="poligonal"][data-theme="dark"],
+html[data-color-scheme="poligonal"] {
+  --p-base0: #060709;
+  --p-base1: #0a0b10;
+  --p-base2: #111219;
+  --p-base3: #181924;
+  --p-fg-strong: #ffffff;
+  --p-fg: #f0f2f8;
+  --p-fg-muted: #8e95a5;
+  --p-fg-faint: #565d6d;
+  --p-accent: #00f0ff;
+  --p-accent-soft: #7928ca;
+  --p-accent-strong: #00f0ff;
+  --p-accent-strong-hover: #00ff9f;
+  --p-accent-contrast: #060709;
+  --p-selected-bg: #1c1e2d;
+  --p-selected-text: #00f0ff;
+  --p-danger: #ff007f;
+  --p-warning: #ffaa00;
+  --p-success: #00ff9f;
+  --p-scrollbar: #1f2130;
+  --p-shadow-rgb: 0, 0, 0;
+  --p-preview-shadow-alpha: 0.75;
+}
+
+/* Poligonal - light */
+html[data-color-scheme="poligonal"][data-theme="light"] {
+  --p-base0: #f4f6fa;
+  --p-base1: #e9ebf3;
+  --p-base2: #ffffff;
+  --p-base3: #ffffff;
+  --p-fg-strong: #060709;
+  --p-fg: #191b24;
+  --p-fg-muted: #565d6d;
+  --p-fg-faint: #8e95a5;
+  --p-accent: #0088cc;
+  --p-accent-soft: #7928ca;
+  --p-accent-strong: #0088cc;
+  --p-accent-strong-hover: #006699;
+  --p-accent-contrast: #ffffff;
+  --p-selected-bg: #e2e8f5;
+  --p-selected-text: #0088cc;
+  --p-danger: #d6006c;
+  --p-warning: #d98200;
+  --p-success: #00aa66;
+  --p-scrollbar: #c8cbd6;
+  --p-shadow-rgb: 6, 7, 9;
+  --p-preview-shadow-alpha: 0.15;
+}
 /* Nord — dark */
 html[data-color-scheme="nord"][data-theme="dark"] {
   --p-base0: #2e3440;

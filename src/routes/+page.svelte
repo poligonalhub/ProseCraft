@@ -495,7 +495,7 @@
   let saveSequence = 0;
   let themePreference = $state<ThemePreference>("system");
   let resolvedTheme = $state<"light" | "dark">("light");
-  let colorScheme = $state<ColorScheme>("prosecraft");
+  let colorScheme = $state<ColorScheme>("poligonal");
   let richTextFontPreference = $state<RichTextFontPreference>("serif");
   let markdownFontPreference = $state<MarkdownFontPreference>("sf-mono");
   let richTextSystemFont = $state("");
