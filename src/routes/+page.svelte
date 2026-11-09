@@ -68,6 +68,18 @@
   import { APP_AUTHOR, APP_LICENSE, APP_NAME, APP_REPOSITORY_URL, APP_VERSION, buildDiagnosticsReport } from "$lib/about";
   import { autoResize } from "$lib/auto-resize";
   import { confirmDestructiveAction } from "$lib/confirm";
+  import {
+    applyImageLayout,
+    clampImageWidth,
+    DEFAULT_IMAGE_LAYOUT,
+    MAX_IMAGE_WIDTH,
+    MIN_IMAGE_WIDTH,
+    readImageLayout,
+    type ImageLayout,
+    type ImageLayoutAlign,
+    type ImageLayoutSize,
+    type ImageLayoutWrap
+  } from "$lib/image-layout";
   import { centerCaretInViewport, scrollContainerOf } from "$lib/typewriter";
   import EditorFontPicker from "$lib/EditorFontPicker.svelte";
   import OutlineView from "$lib/OutlineView.svelte";
@@ -542,6 +554,11 @@
   let richTextFadeActiveBlocks: HTMLElement[] = [];
   const writingBlockSelector = "p, h1, h2, h3, blockquote, pre, li, td, th, div";
   let selectedEditorImage = $state<HTMLImageElement | null>(null);
+  let selectedImageLayout = $state<ImageLayout>({ ...DEFAULT_IMAGE_LAYOUT });
+  let customImageWidthEditing = $state(false);
+  let customImageWidthDraft = $state<string | null>(null);
+  let imageResizeHandle = $state<{ left: number; top: number } | null>(null);
+  let imageResizeStart: { x: number; percent: number; columnWidth: number } | null = null;
   let imageFileInput = $state<HTMLInputElement>();
   let imageDropActive = $state(false);
   let imageInsertError = $state("");
@@ -1424,6 +1441,8 @@
       if (workspaceView !== "writing") writingSidebarState.right = false;
     }
     compactProgressLayout = compactProgress;
+    // The storyboard tab hides on phone layouts; never strand the user there.
+    if (compactChapter && workspaceView === "storyboard") setWorkspaceView("writing");
   }
 
   function rememberDrawerTrigger() {
@@ -1483,6 +1502,58 @@
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previous;
+    };
+  });
+
+  type EdgeSwipe = { id: number; startX: number; startY: number } | null;
+  let edgeSwipe: EdgeSwipe = null;
+
+  /**
+   * Touch edge-swipe for the sidebar drawers (hover-peek is mouse-only).
+   * A mostly-horizontal swipe from a screen edge opens that side; swiping
+   * back toward the edge from inside an open drawer dismisses it.
+   */
+  function handleEdgeTouchStart(event: TouchEvent) {
+    if (event.touches.length !== 1) {
+      edgeSwipe = null;
+      return;
+    }
+    const touch = event.touches[0];
+    const target = touch.target;
+    if (target instanceof Element && target.closest(
+      ".storyboard-viewport, .ctx-menu, dialog, input, textarea, select, [contenteditable='true']"
+    )) {
+      edgeSwipe = null;
+      return;
+    }
+    edgeSwipe = { id: touch.identifier, startX: touch.clientX, startY: touch.clientY };
+  }
+
+  function handleEdgeTouchEnd(event: TouchEvent) {
+    const swipe = edgeSwipe;
+    edgeSwipe = null;
+    if (!swipe) return;
+    const touch = event.changedTouches[0];
+    if (!touch || touch.identifier !== swipe.id) return;
+    const dx = touch.clientX - swipe.startX;
+    const dy = touch.clientY - swipe.startY;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > 40) return;
+    const width = window.innerWidth;
+    if (dx > 0) {
+      if (swipe.startX <= 24 && !leftSidebarVisible) toggleLeftSidebar();
+      else if (swipe.startX > width - Math.min(360, width * 0.8) && rightSidebarVisible) closeSidebarDrawers();
+    } else {
+      if (swipe.startX >= width - 24 && !rightSidebarVisible) toggleRightSidebar();
+      else if (swipe.startX < Math.min(360, width * 0.8) && leftSidebarVisible) closeSidebarDrawers();
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener("touchstart", handleEdgeTouchStart, { passive: true });
+    window.addEventListener("touchend", handleEdgeTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", handleEdgeTouchStart);
+      window.removeEventListener("touchend", handleEdgeTouchEnd);
     };
   });
 
@@ -3411,10 +3482,160 @@
     handleInput();
   }
 
+  const IMAGE_SIZE_OPTIONS: { size: Exclude<ImageLayoutSize, "custom">; label: string; ariaLabel: string }[] = [
+    { size: "small", label: "Small", ariaLabel: "Small image size" },
+    { size: "medium", label: "Medium", ariaLabel: "Medium image size" },
+    { size: "large", label: "Large", ariaLabel: "Large image size" },
+    { size: "full", label: "Full", ariaLabel: "Full width" }
+  ];
+  const IMAGE_ALIGN_OPTIONS: { align: ImageLayoutAlign; label: string }[] = [
+    { align: "left", label: "Left" },
+    { align: "center", label: "Center" },
+    { align: "right", label: "Right" }
+  ];
+
+  function selectedImageWidthPercent(): number {
+    const image = selectedEditorImage;
+    if (!image) return MAX_IMAGE_WIDTH;
+    const layout = readImageLayout(image);
+    if (layout.size === "custom") return layout.width ?? MAX_IMAGE_WIDTH;
+    const columnWidth = editor?.clientWidth ?? 0;
+    return columnWidth > 0
+      ? clampImageWidth(image.getBoundingClientRect().width / columnWidth * 100)
+      : MAX_IMAGE_WIDTH;
+  }
+
+  function paintCustomImageWidth(image: HTMLImageElement) {
+    const layout = readImageLayout(image);
+    if (layout.size === "custom") {
+      image.style.width = `${layout.width ?? MAX_IMAGE_WIDTH}%`;
+    } else {
+      image.style.removeProperty("width");
+    }
+  }
+
+  function paintEditorImageWidths() {
+    if (!editor) return;
+    for (const image of editor.querySelectorAll<HTMLImageElement>("img")) {
+      paintCustomImageWidth(image);
+    }
+  }
+
+  function applySelectedImageLayout(patch: Partial<ImageLayout>) {
+    const image = selectedEditorImage;
+    if (!image || !editor.contains(image)) {
+      selectEditorImage(null);
+      return;
+    }
+    applyImageLayout(image, { ...readImageLayout(image), ...patch });
+    paintCustomImageWidth(image);
+    selectedImageLayout = readImageLayout(image);
+    void tick().then(positionImageResizeHandle);
+    handleInput();
+  }
+
+  function setSelectedImageSize(size: Exclude<ImageLayoutSize, "custom">) {
+    customImageWidthEditing = false;
+    customImageWidthDraft = null;
+    applySelectedImageLayout({ size });
+  }
+
+  function useCustomImageWidth() {
+    customImageWidthEditing = true;
+    customImageWidthDraft = null;
+    applySelectedImageLayout({ size: "custom", width: selectedImageWidthPercent() });
+  }
+
+  function handleImageWidthInput(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    customImageWidthDraft = input.value;
+    const width = Number.parseFloat(input.value);
+    if (!Number.isFinite(width)) return;
+    applySelectedImageLayout({ size: "custom", width: clampImageWidth(width) });
+  }
+
+  function setSelectedImageAlign(align: ImageLayoutAlign) {
+    applySelectedImageLayout({ align });
+  }
+
+  function setSelectedImageWrap(wrap: ImageLayoutWrap) {
+    if (wrap === "block") {
+      applySelectedImageLayout({ wrap });
+    } else {
+      applySelectedImageLayout({ wrap, align: wrap === "wrap-left" ? "left" : "right" });
+    }
+  }
+
+  function positionImageResizeHandle() {
+    const image = selectedEditorImage;
+    if (!image || !editorColumn || !editor.contains(image)) {
+      imageResizeHandle = null;
+      return;
+    }
+    const column = editorColumn.getBoundingClientRect();
+    const rect = image.getBoundingClientRect();
+    imageResizeHandle = { left: rect.right - column.left, top: rect.bottom - column.top };
+  }
+
+  function startImageResize(event: PointerEvent) {
+    const image = selectedEditorImage;
+    if (!image || !editor.contains(image) || (event.pointerType === "mouse" && event.button !== 0)) return;
+    event.preventDefault();
+    customImageWidthDraft = null;
+    imageResizeStart = { x: event.clientX, percent: selectedImageWidthPercent(), columnWidth: editor.clientWidth };
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function moveImageResize(event: PointerEvent) {
+    const start = imageResizeStart;
+    const image = selectedEditorImage;
+    if (!start || !image) return;
+    const width = clampImageWidth(start.percent + (event.clientX - start.x) / Math.max(1, start.columnWidth) * 100);
+    customImageWidthEditing = true;
+    applyImageLayout(image, { ...readImageLayout(image), size: "custom", width });
+    paintCustomImageWidth(image);
+    selectedImageLayout = readImageLayout(image);
+    positionImageResizeHandle();
+  }
+
+  function endImageResize(event: PointerEvent) {
+    if (!imageResizeStart) return;
+    imageResizeStart = null;
+    const handle = event.currentTarget as HTMLElement;
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    handleInput();
+  }
+
+  function handleImageResizeKeydown(event: KeyboardEvent) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    customImageWidthEditing = true;
+    customImageWidthDraft = null;
+    const step = event.key === "ArrowRight" ? 5 : -5;
+    applySelectedImageLayout({ size: "custom", width: clampImageWidth(selectedImageWidthPercent() + step) });
+  }
+
+  onMount(() => {
+    const reposition = () => positionImageResizeHandle();
+    paintEditorImageWidths();
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  });
+
   function selectEditorImage(image: HTMLImageElement | null) {
     selectedEditorImage?.classList.remove("selected-writing-image");
     selectedEditorImage = image && editor.contains(image) ? image : null;
     selectedEditorImage?.classList.add("selected-writing-image");
+    selectedImageLayout = selectedEditorImage ? readImageLayout(selectedEditorImage) : { ...DEFAULT_IMAGE_LAYOUT };
+    customImageWidthEditing = false;
+    customImageWidthDraft = null;
+    imageResizeStart = null;
+    if (selectedEditorImage) paintCustomImageWidth(selectedEditorImage);
+    void tick().then(positionImageResizeHandle);
   }
 
   function handleEditorClick(event: MouseEvent) {
@@ -3505,6 +3726,9 @@
       image.setAttribute("width", String(width));
       image.setAttribute("height", String(Math.round(width * ratio)));
     }
+    applyImageLayout(image, { ...readImageLayout(image), size: "large" });
+    selectedImageLayout = readImageLayout(image);
+    paintCustomImageWidth(image);
     handleInput();
   }
 
@@ -3683,6 +3907,8 @@
     if (!editor) return;
     editor.innerHTML = html;
     ensureParagraphsAroundRichBlocks(editor);
+    selectEditorImage(null);
+    paintEditorImageWidths();
     if (!applyingUndoHistory) undoManager.sync(bodyUndoKey(), cleanHtml(html));
     void renderRichWidgets(editor, { mode: "svg", bodySizePt: 12 });
     refreshWikiMentionHighlights();
@@ -5387,7 +5613,8 @@
   }
 
   function startStoryboardDrawing(event: PointerEvent) {
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch"
+      && (activeDrawingTool === "select" || activeDrawingTool === "pan")) return;
     if (event.button !== 0 || boardSpacePan) return;
     const target = event.target;
     if (target instanceof Element
@@ -5443,7 +5670,8 @@
   }
 
   function startStoryboardCanvasInteraction(event: PointerEvent) {
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch"
+      && (activeDrawingTool === "select" || activeDrawingTool === "pan")) return;
     if (activeDrawingTool === "pan") {
       const target = event.target;
       if (target instanceof Element && target.closest("button, input, textarea, select")) return;
@@ -5843,6 +6071,32 @@
       item.folderId === folder.id ? { ...item, folderId: parentId } : item
     );
     if (parentId) expandResearchFolderPath(parentId);
+    persist();
+  }
+
+  /** Reorders a folder among its siblings for touch users (drag is mouse-only). */
+  function moveWikiFolder(id: string, offset: number) {
+    const folder = researchFolders.find((entry) => entry.id === id);
+    if (!folder) return;
+    const siblings = researchFolders.filter((entry) => entry.parentId === folder.parentId);
+    const index = siblings.findIndex((entry) => entry.id === id);
+    const targetIndex = index + offset;
+    if (index < 0 || targetIndex < 0 || targetIndex >= siblings.length) return;
+    const next = [...researchFolders];
+    const from = next.findIndex((entry) => entry.id === siblings[index].id);
+    const to = next.findIndex((entry) => entry.id === siblings[targetIndex].id);
+    [next[from], next[to]] = [next[to], next[from]];
+    researchFolders = next;
+    persist();
+  }
+
+  function moveWikiFolderToTop(id: string) {
+    const folder = researchFolders.find((entry) => entry.id === id);
+    if (!folder || folder.parentId === null) return;
+    researchFolders = [
+      ...researchFolders.filter((entry) => entry.id !== id),
+      { ...folder, parentId: null }
+    ];
     persist();
   }
 
@@ -7825,11 +8079,17 @@
     const menu = contextMenuElement;
     if (!menu || !contextMenu) return;
     const margin = 8;
+    // visualViewport shrinks when the touch keyboard opens; fall back to the
+    // layout viewport where it is unsupported.
+    const viewport = window.visualViewport;
+    const viewWidth = viewport?.width ?? window.innerWidth;
+    const viewHeight = viewport?.height ?? window.innerHeight;
     const rect = menu.getBoundingClientRect();
     let x = contextMenu.x;
     let y = contextMenu.y;
-    if (x + rect.width > window.innerWidth - margin) x = Math.max(margin, window.innerWidth - rect.width - margin);
-    if (y + rect.height > window.innerHeight - margin) y = Math.max(margin, window.innerHeight - rect.height - margin);
+    if (x + rect.width > viewWidth - margin) x = Math.max(margin, viewWidth - rect.width - margin);
+    if (y + rect.height > viewHeight - margin) y = Math.max(margin, viewHeight - rect.height - margin);
+    menu.style.maxHeight = `${Math.max(160, viewHeight - y - margin)}px`;
     if (x !== contextMenu.x || y !== contextMenu.y) contextMenu = { ...contextMenu, x, y };
   }
 
@@ -8462,6 +8722,8 @@
                     bind:this={chapterNameInput}
                     class="chapter-name-input"
                     aria-label="Rename {chapterLabel(chapter)}"
+                    autocapitalize="sentences"
+                    enterkeyhint="done"
                     bind:value={chapterNameDraft}
                     maxlength="60"
                     onblur={() => saveChapterRename(chapter.id)}
@@ -8528,6 +8790,8 @@
                         bind:this={sceneNameInput}
                         class="chapter-name-input"
                         aria-label="Rename {doc.title || 'Untitled scene'}"
+                        autocapitalize="sentences"
+                        enterkeyhint="done"
                         bind:value={sceneTitleDraft}
                         maxlength="120"
                         onblur={() => saveSceneRename(doc.id)}
@@ -8624,6 +8888,8 @@
                       bind:this={researchFolderInput}
                       class="chapter-name-input note-folder-name-input"
                       aria-label="Rename folder {item.folder.title}"
+                      autocapitalize="sentences"
+                      enterkeyhint="done"
                       bind:value={researchFolderNameDraft}
                       maxlength="60"
                       onblur={() => saveResearchFolderRename(item.folder.id)}
@@ -8881,12 +9147,17 @@
           <button type="button" role="menuitem" disabled={researchBusy} onclick={() => { addResearchFiles(); closeContextMenu(); }}>Add file</button>
           <button type="button" role="menuitem" onclick={() => { openResearchLinkDialog(); closeContextMenu(); }}>Add web link</button>
         {:else if ctx.kind === "wiki-folder" && ctxFolder}
+          {@const folderSiblings = researchFolders.filter((entry) => entry.parentId === ctxFolder.parentId)}
+          {@const folderIndex = folderSiblings.findIndex((entry) => entry.id === ctxFolder.id)}
           <button type="button" role="menuitem" onclick={() => { createSpaceDocument("Wiki", ctxFolder.id); closeContextMenu(); }}>Add page</button>
           <button type="button" role="menuitem" onclick={() => { createResearchFolder(ctxFolder.id); closeContextMenu(); }}>Add subfolder</button>
           <button type="button" role="menuitem" disabled={researchBusy} onclick={() => { addResearchFiles(ctxFolder.id); closeContextMenu(); }}>Add file</button>
           <button type="button" role="menuitem" onclick={() => { openResearchLinkDialog(ctxFolder.id); closeContextMenu(); }}>Add web link</button>
           <div class="ctx-divider"></div>
           <button type="button" role="menuitem" onclick={() => { startResearchFolderRename(ctxFolder); closeContextMenu(); }}>Rename folder</button>
+          <button type="button" role="menuitem" disabled={folderIndex <= 0} onclick={() => { moveWikiFolder(ctxFolder.id, -1); closeContextMenu(); }}>Move up</button>
+          <button type="button" role="menuitem" disabled={folderIndex < 0 || folderIndex >= folderSiblings.length - 1} onclick={() => { moveWikiFolder(ctxFolder.id, 1); closeContextMenu(); }}>Move down</button>
+          <button type="button" role="menuitem" disabled={ctxFolder.parentId === null} onclick={() => { moveWikiFolderToTop(ctxFolder.id); closeContextMenu(); }}>Move to top level</button>
           <button type="button" role="menuitem" class="danger" onclick={() => { removeResearchFolder(ctxFolder); closeContextMenu(); }}>Remove folder</button>
         {:else if ctx.kind === "wiki-doc" && ctxDoc}
           <button type="button" role="menuitem" onclick={() => { openSidebarDocument(ctxDoc.id); closeContextMenu(); }}>Open page</button>
@@ -8994,7 +9265,9 @@
         <div class="workspace-modes" role="tablist" aria-label="Workspace view">
           <button class="workspace-mode" class:active={workspaceView === "outline"} role="tab" aria-selected={workspaceView === "outline"} onclick={openOutlineView}>Outline</button>
           <button class="workspace-mode" class:active={workspaceView === "writing"} role="tab" aria-selected={workspaceView === "writing"} onclick={() => setWorkspaceView("writing")}>Write</button>
+          {#if !compactChapterLayout}
           <button class="workspace-mode" class:active={workspaceView === "storyboard"} role="tab" aria-selected={workspaceView === "storyboard"} onclick={() => setWorkspaceView("storyboard")}>Storyboard</button>
+          {/if}
           {#if timelineEnabled}
           <button class="workspace-mode" class:active={workspaceView === "timeline"} role="tab" aria-selected={workspaceView === "timeline"} onclick={() => setWorkspaceView("timeline")}>Timeline</button>
           {/if}
@@ -9062,7 +9335,7 @@
             <span>Progress</span>
           </button>
           {/if}
-          <button class="panel-toggle" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (Ctrl/Cmd+/)" aria-pressed={shortcutsOpen} onclick={toggleShortcuts}>
+          <button class="panel-toggle shortcuts-toggle" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (Ctrl/Cmd+/)" aria-pressed={shortcutsOpen} onclick={toggleShortcuts}>
             <Keyboard size={15} aria-hidden="true" />
             <span>Shortcuts</span>
           </button>
@@ -9112,11 +9385,14 @@
           data-undo-key={inChapterMode && activeChapter ? `title:chapter:${activeChapter.id}` : `title:${activeDocumentId}`}
           aria-label={inChapterMode ? "Chapter title" : "Document title"}
           placeholder="Untitled"
+          autocapitalize="sentences"
+          enterkeyhint="done"
           bind:value={title}
           oninput={persist}
           maxlength="120"
         />
 
+        <div class="editor-tools">
         {#if !markdownEditorMode}
         <div class="toolbar" role="toolbar" aria-label="Text formatting">
           <label class="sr-only" for="block-style">Text style</label>
@@ -9153,15 +9429,79 @@
         {/if}
 
         {#if selectedEditorImage && !markdownEditorMode}
-          <div class="image-edit-toolbar" role="toolbar" aria-label="Selected image tools">
+          <div
+            class="image-edit-toolbar"
+            role="toolbar"
+            tabindex="0"
+            aria-label="Selected image tools"
+            onkeydown={(event) => {
+              if (event.key !== "Escape") return;
+              selectEditorImage(null);
+              editor.focus();
+            }}
+          >
             <span class="image-edit-label">Image size</span>
             <button type="button" onpointerdown={(event) => event.preventDefault()} onclick={() => setSelectedImageWidth(50)}>50%</button>
             <button type="button" onpointerdown={(event) => event.preventDefault()} onclick={() => setSelectedImageWidth(75)}>75%</button>
             <button type="button" onpointerdown={(event) => event.preventDefault()} onclick={() => setSelectedImageWidth(100)}>Fit width</button>
             <button type="button" onpointerdown={(event) => event.preventDefault()} onclick={() => setSelectedImageWidth(null)}>Original size</button>
+            <span class="toolbar-divider" aria-hidden="true"></span>
+            <span class="image-edit-label">Column width</span>
+            <div class="image-layout-group" role="group" aria-label="Image column width">
+              {#each IMAGE_SIZE_OPTIONS as option (option.size)}
+                <button
+                  type="button"
+                  aria-label={option.ariaLabel}
+                  aria-pressed={selectedImageLayout.size === option.size}
+                  onpointerdown={(event) => event.preventDefault()}
+                  onclick={() => setSelectedImageSize(option.size)}
+                >{option.label}</button>
+              {/each}
+              <button
+                type="button"
+                aria-pressed={selectedImageLayout.size === "custom"}
+                onpointerdown={(event) => event.preventDefault()}
+                onclick={useCustomImageWidth}
+              >Custom</button>
+              {#if selectedImageLayout.size === "custom" || customImageWidthEditing}
+                <label class="image-custom-width">
+                  <input
+                    type="number"
+                    min={MIN_IMAGE_WIDTH}
+                    max={MAX_IMAGE_WIDTH}
+                    step="5"
+                    aria-label="Custom image width in percent"
+                    value={customImageWidthDraft ?? String(selectedImageLayout.width ?? MAX_IMAGE_WIDTH)}
+                    oninput={handleImageWidthInput}
+                    onblur={() => { customImageWidthDraft = null; }}
+                    onkeydown={(event) => { if (event.key === "Enter") (event.currentTarget as HTMLInputElement).blur(); }}
+                  />
+                  <span aria-hidden="true">%</span>
+                </label>
+              {/if}
+            </div>
+            <span class="image-edit-label">Align</span>
+            <div class="image-layout-group" role="group" aria-label="Image alignment">
+              {#each IMAGE_ALIGN_OPTIONS as option (option.align)}
+                <button
+                  type="button"
+                  aria-label={`Align image ${option.label.toLowerCase()}`}
+                  aria-pressed={selectedImageLayout.align === option.align}
+                  onpointerdown={(event) => event.preventDefault()}
+                  onclick={() => setSelectedImageAlign(option.align)}
+                >{option.label}</button>
+              {/each}
+            </div>
+            <span class="image-edit-label">Text flow</span>
+            <div class="image-layout-group" role="group" aria-label="Text flow around image">
+              <button type="button" aria-label="Image on its own line" aria-pressed={selectedImageLayout.wrap === "block"} onpointerdown={(event) => event.preventDefault()} onclick={() => setSelectedImageWrap("block")}>Own line</button>
+              <button type="button" aria-label="Wrap text beside left-aligned image" aria-pressed={selectedImageLayout.wrap === "wrap-left"} onpointerdown={(event) => event.preventDefault()} onclick={() => setSelectedImageWrap("wrap-left")}>Wrap left</button>
+              <button type="button" aria-label="Wrap text beside right-aligned image" aria-pressed={selectedImageLayout.wrap === "wrap-right"} onpointerdown={(event) => event.preventDefault()} onclick={() => setSelectedImageWrap("wrap-right")}>Wrap right</button>
+            </div>
             <button type="button" class="remove-image-button" onpointerdown={(event) => event.preventDefault()} onclick={removeSelectedImage}>Remove image</button>
           </div>
         {/if}
+        </div>
 
         {#if markdownEditorMode}
           <div
@@ -9209,6 +9549,24 @@
             hideHarperPopover();
           }}
         >{@html starterContent}</div>
+
+        {#if selectedEditorImage && !markdownEditorMode && imageResizeHandle}
+          <div
+            class="image-resize-handle"
+            role="slider"
+            tabindex="0"
+            aria-label="Image width"
+            aria-valuemin={MIN_IMAGE_WIDTH}
+            aria-valuemax={MAX_IMAGE_WIDTH}
+            aria-valuenow={Math.round(selectedImageWidthPercent())}
+            style={`left: ${imageResizeHandle.left}px; top: ${imageResizeHandle.top}px`}
+            onpointerdown={startImageResize}
+            onpointermove={moveImageResize}
+            onpointerup={endImageResize}
+            onpointercancel={endImageResize}
+            onkeydown={handleImageResizeKeydown}
+          ></div>
+        {/if}
 
         {#if wikiMentionPreview}
           <aside
@@ -9540,7 +9898,7 @@
                       <span class="card-kind">{card.kind === "blank" ? "blank" : card.kind}</span>
                       <button class="remove-board-card" aria-label="Remove {card.title} from storyboard" title="Remove from storyboard" onclick={() => removeStoryboardCard(card.id)}><X size={14} aria-hidden="true" /></button>
                     </div>
-                    <input class="board-card-title" data-undo-key={`card-title:${card.id}`} aria-label="Storyboard card title" value={card.title} maxlength="120" oninput={(event) => updateStoryboardCard(card.id, "title", (event.currentTarget as HTMLInputElement).value)} />
+                    <input class="board-card-title" data-undo-key={`card-title:${card.id}`} aria-label="Storyboard card title" autocapitalize="sentences" enterkeyhint="done" value={card.title} maxlength="120" oninput={(event) => updateStoryboardCard(card.id, "title", (event.currentTarget as HTMLInputElement).value)} />
                     <textarea
                       class="board-card-note"
                       data-undo-key={card.kind === "chapter" ? `chapter-summary:${card.sourceId}` : `card-note:${card.id}`}
@@ -9763,7 +10121,7 @@
         <div class="section-title"><strong>Save this version</strong></div>
         <p class="section-subtitle">Keeps a copy of “{title || "Untitled"}” as it is now. Up to ten are kept per scene.</p>
         <form class="snapshot-form side-form" onsubmit={takeSnapshot}>
-          <input class="preference-select" type="text" placeholder="Optional note" maxlength="120" bind:value={snapshotNote} aria-label="Snapshot note" />
+          <input class="preference-select" type="text" placeholder="Optional note" maxlength="120" autocapitalize="sentences" bind:value={snapshotNote} aria-label="Snapshot note" />
           <button class="data-button" type="submit">Take snapshot</button>
         </form>
       </section>
@@ -10320,7 +10678,7 @@
       <h3 class="settings-pane-title">About</h3>
     <div class="about-row">
       <button type="button" class="about-row-button" onclick={openAbout}>About {APP_NAME} · version {APP_VERSION}</button>
-      <button type="button" class="about-row-button" onclick={showShortcutsFromSettings}>Keyboard shortcuts</button>
+      <button type="button" class="about-row-button about-shortcuts-button" onclick={showShortcutsFromSettings}>Keyboard shortcuts</button>
     </div>
     </div>
     </div>
@@ -10716,7 +11074,7 @@
     <section class="preference-section">
       <div class="preference-heading"><strong>Save this version</strong><span>Keeps a copy of “{title || "Untitled"}” as it is now. Up to ten are kept per scene.</span></div>
       <form class="snapshot-form" onsubmit={takeSnapshot}>
-        <input class="preference-select" type="text" placeholder="Optional note" maxlength="120" bind:value={snapshotNote} aria-label="Snapshot note" />
+        <input class="preference-select" type="text" placeholder="Optional note" maxlength="120" autocapitalize="sentences" bind:value={snapshotNote} aria-label="Snapshot note" />
         <button class="data-button" type="submit">Take snapshot</button>
       </form>
     </section>
@@ -10817,6 +11175,9 @@
           type="text"
           inputmode="url"
           placeholder="https://example.com"
+          autocapitalize="off"
+          autocorrect="off"
+          enterkeyhint="done"
           bind:value={researchLinkUrl}
           required
         />
@@ -11145,7 +11506,12 @@
   :global(button), :global(input), :global(select) { font: inherit; }
   :global(button) { color: inherit; }
   :global(button), :global(a) { -webkit-tap-highlight-color: transparent; }
-  :global(button) { touch-action: manipulation; }
+  :global(button), :global(a) { touch-action: manipulation; }
+  :global(html), :global(body) { overscroll-behavior-y: none; }
+  /* Long-press menus own these rows: never let iOS text selection or the
+     system callout fight them. Editor text stays selectable. */
+  .tree-name, .chapter-drag, .scene-mark, .label-dot, .chevron, .folder-icon,
+  .space-icon, .note-folder-icon { -webkit-touch-callout: none; user-select: none; }
 
   .drawer-backdrop {
     position: fixed;
@@ -11187,7 +11553,7 @@
   .author-name { overflow: hidden; max-width: 100%; color: var(--text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
   .project-identity .author-name { grid-column: 1; grid-row: 2; padding-top: 2px; }
   .nav-label { color: var(--text-muted); font-size: 9px; font-weight: 700; letter-spacing: 1px; }
-  .sidebar-tree { min-height: 0; flex: 1; overflow-y: auto; margin-top: 28px; padding: 0 1px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+  .sidebar-tree { min-height: 0; flex: 1; overflow-y: auto; margin-top: 28px; padding: 0 1px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; overscroll-behavior: contain; }
   .tree-heading, .space-heading, .chapter-row { display: flex; min-width: 0; align-items: center; }
   .tree-heading { justify-content: space-between; padding: 0 7px 7px; }
   .tree-add, .row-add, .row-action { display: grid; width: 23px; height: 23px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 16px; line-height: 1; }
@@ -11225,7 +11591,7 @@
   .row-add.research-add { opacity: .55; }
   .row-add.research-add:focus-visible { opacity: 1; }
   .row-add:disabled { opacity: .18; cursor: default; }
-  .ctx-menu { position: fixed; z-index: 80; display: flex; min-width: 210px; max-width: min(280px, calc(100vw - 16px)); max-height: min(70vh, 480px); flex-direction: column; gap: 1px; overflow-y: auto; padding: 4px; border: 1px solid var(--border-control); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow-panel); }
+  .ctx-menu { position: fixed; z-index: 80; display: flex; min-width: 210px; max-width: min(280px, calc(100vw - 16px)); max-height: min(70vh, 480px); flex-direction: column; gap: 1px; overflow-y: auto; overscroll-behavior: contain; padding: 4px; border: 1px solid var(--border-control); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow-panel); }
   .ctx-menu button { display: flex; width: 100%; min-height: 38px; align-items: center; gap: 8px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 12px; text-align: left; }
   .ctx-menu button:hover:not(:disabled), .ctx-menu button:focus-visible { background: var(--hover-bg); color: var(--text-heading); outline: none; }
   .ctx-menu button:disabled { opacity: .4; cursor: default; }
@@ -11320,7 +11686,7 @@
   .version-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .sync-dot, .save-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
-  .progress-sidebar { position: fixed; inset: 0 0 0 auto; z-index: 2; display: flex; width: 286px; flex-direction: column; overflow-y: auto; padding: 27px 19px 22px; border-left: 1px solid var(--border); background: var(--sidebar-bg); scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; transition: transform .18s ease, opacity .18s ease; }
+  .progress-sidebar { position: fixed; inset: 0 0 0 auto; z-index: 2; display: flex; width: 286px; flex-direction: column; overflow-y: auto; padding: 27px 19px 22px; border-left: 1px solid var(--border); background: var(--sidebar-bg); scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; overscroll-behavior: contain; transition: transform .18s ease, opacity .18s ease; }
   .progress-sidebar.peek { transform: translateX(100%); pointer-events: none; }
   .progress-sidebar.peek.peek-open { transform: translateX(0); pointer-events: auto; box-shadow: var(--shadow-panel-left); }
   .progress-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 0 3px 19px; }
@@ -11456,7 +11822,7 @@
   .tile-grid.split-open:not(.stacked-tiles) > .editor-column { grid-column: 1; grid-row: 1 / -1; }
   .tile-grid.split-open .editor-scroll { height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   /* The toolbar sticks to the tile instead of the page; its own surface stays opaque above the text. */
-  .tile-grid.split-open:not(.stacked-tiles) .toolbar { top: 0; }
+  .tile-grid.split-open:not(.stacked-tiles) .editor-tools { top: 0; }
   /* One column stacks the tiles instead of squeezing them, and the page scrolls again. */
   .tile-grid.split-open.stacked-tiles { height: auto; grid-template-rows: none; }
   .tile-grid.split-open.stacked-tiles > .editor-column,
@@ -11470,7 +11836,8 @@
   .markdown-utilities .markdown-mode-toggle { margin-left: 0; }
   .title-input { display: block; width: 100%; margin: 21px 0 22px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-heading); font-family: var(--writing-font, var(--interface-font)); font-size: clamp(calc(32px * var(--editor-scale)), calc(4vw * var(--editor-scale)), calc(40px * var(--editor-scale))); font-weight: 500; letter-spacing: -1.35px; line-height: 1.2; }
   .title-input::placeholder { color: var(--text-faint); }
-  .toolbar { position: sticky; top: 58px; z-index: 1; display: flex; min-height: 41px; align-items: center; gap: 3px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); box-shadow: var(--shadow-soft); }
+  .editor-tools { position: sticky; top: 58px; z-index: 1; display: flex; flex-direction: column; gap: 6px; }
+  .toolbar { display: flex; min-height: 41px; align-items: center; gap: 3px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); box-shadow: var(--shadow-soft); }
   .style-select { width: 112px; height: 28px; padding: 0 6px; border: 0; outline: 0; background: transparent; color: var(--text-secondary); font-size: 10px; cursor: pointer; }
   .toolbar-divider { width: 1px; height: 18px; margin: 0 5px; background: var(--border); }
   .tool-button { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; }
@@ -11483,11 +11850,20 @@
   .markdown-mode-toggle:hover { border-color: var(--accent); color: var(--text-heading); }
   .image-tool-button { font-size: 17px; }
   .image-insert-error { margin: 8px 0 0; color: var(--danger, #b42318); font-size: 11px; }
-  .image-edit-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 8px 0 12px; padding: 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); }
+  .image-edit-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 0; padding: 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); }
   .image-edit-label { margin: 0 4px; color: var(--text-muted); font-size: 10px; }
   .image-edit-toolbar button { min-height: 25px; padding: 0 8px; border: 1px solid var(--border-control); border-radius: 4px; background: var(--surface); color: var(--text-secondary); cursor: pointer; font-size: 10px; }
   .image-edit-toolbar button:hover { border-color: var(--accent); color: var(--text-heading); }
   .image-edit-toolbar .remove-image-button { margin-left: auto; color: var(--danger, #b42318); }
+  .image-edit-toolbar button[aria-pressed="true"] { border-color: var(--accent); background: var(--selected-bg); color: var(--selected-text); }
+  .image-layout-group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .image-custom-width { display: inline-flex; align-items: center; gap: 2px; color: var(--text-muted); font-size: 10px; }
+  .image-custom-width input { width: 46px; min-height: 25px; padding: 0 4px; border: 1px solid var(--border-control); border-radius: 4px; background: var(--surface); color: var(--text-secondary); font-size: 10px; }
+  .image-resize-handle { position: absolute; z-index: 5; width: 15px; height: 15px; transform: translate(-50%, -50%); border: 2px solid var(--surface-raised); border-radius: 50%; background: var(--accent); box-shadow: 0 1px 3px rgb(0 0 0 / 30%); cursor: nwse-resize; touch-action: none; }
+  @media (pointer: coarse) {
+    .image-resize-handle { width: 24px; height: 24px; }
+  }
+  .image-resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .markdown-source-editor { width: 100%; min-height: 430px; margin-top: 0; }
   .markdown-source-editor :global(.cm-editor) { min-height: 430px; background: transparent; color: var(--text-body); font-size: calc(13px * var(--editor-scale)); }
   .markdown-source-editor :global(.cm-scroller) { overflow: visible !important; font-family: var(--markdown-editor-font); line-height: 1.85; }
@@ -11538,6 +11914,24 @@
   .editor-content :global(a) { color: var(--link); text-decoration-color: var(--link-underline); text-underline-offset: 3px; }
   .editor-content :global(img) { display: block; max-width: 100%; height: auto; margin: 18px 0; object-fit: contain; }
   .editor-content :global(img.selected-writing-image) { outline: 2px solid var(--accent); outline-offset: 3px; cursor: pointer; }
+  .editor-content :global(img[data-size="small"]) { width: 25%; height: auto; max-width: 100%; }
+  .editor-content :global(img[data-size="medium"]) { width: 50%; height: auto; max-width: 100%; }
+  .editor-content :global(img[data-size="large"]) { width: 75%; height: auto; max-width: 100%; }
+  .editor-content :global(img[data-size="full"]) { width: 100%; height: auto; max-width: 100%; }
+  .editor-content :global(img[data-size="custom"]) { max-width: 100%; }
+  .editor-content :global(img[data-align="left"]) { margin-right: auto; }
+  .editor-content :global(img[data-align="center"]) { margin-right: auto; margin-left: auto; }
+  .editor-content :global(img[data-align="right"]) { margin-left: auto; }
+  .editor-content :global(img[data-wrap="wrap-left"]) { float: left; width: 50%; max-width: 50%; margin: 4px 18px 14px 0; }
+  .editor-content :global(img[data-wrap="wrap-right"]) { float: right; width: 50%; max-width: 50%; margin: 4px 0 14px 18px; }
+  .editor-content :global(img[data-wrap="wrap-left"][data-size="small"]),
+  .editor-content :global(img[data-wrap="wrap-right"][data-size="small"]) { width: 25%; max-width: 25%; }
+  /* Headings and dividers must start below a floated image. */
+  .editor-content :global(h1), .editor-content :global(h2), .editor-content :global(h3),
+  .editor-content :global(blockquote), .editor-content :global(pre),
+  .editor-content :global(table), .editor-content :global(.scene-break),
+  .editor-content :global(.math-block), .editor-content :global(.mermaid-diagram),
+  .editor-content :global(.calc-worksheet) { clear: both; }
   .editor-content :global(.math-inline) { display: inline; white-space: nowrap; }
   .editor-content :global(.math-inline svg) { display: inline-block; max-width: 100%; max-height: 1.6em; width: auto; height: auto; vertical-align: middle; }
   .editor-content :global(.math-block), .editor-content :global(.mermaid-diagram), .editor-content :global(.calc-worksheet) { display: block; max-width: 100%; margin: .85em auto; text-align: center; }
@@ -11545,7 +11939,7 @@
   .editor-content :global(.rich-render-error) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; white-space: pre-wrap; }
   .editor-content :global(pre) { overflow-x: auto; padding: 12px 14px; border-radius: 5px; background: var(--surface-raised); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; line-height: 1.55; }
   .editor-content :global(code) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
-  .editor-content :global(table) { width: 100%; border-collapse: collapse; font-size: .9em; }
+  .editor-content :global(table) { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; font-size: .9em; }
   .editor-content :global(th), .editor-content :global(td) { padding: 5px 8px; border: 1px solid var(--border); text-align: left; }
   .editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 15px; border-top: 1px solid var(--border-soft); color: var(--text-faint); font-size: 10px; }
   .footer-actions { display: flex; align-items: center; gap: 12px; }
@@ -11623,7 +12017,7 @@
   }
   .main-panel:has(.storyboard-active) .app-banner,
   .main-panel:has(.storyboard-active) .storage-banner { position: relative; z-index: 6; }
-  .storyboard-sources { min-height: 0; overflow: auto; padding: 16px 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); scrollbar-width: thin; }
+  .storyboard-sources { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 16px 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); scrollbar-width: thin; }
   .board-sources-heading { padding: 0 3px 14px; border-bottom: 1px solid var(--border-soft); }
   .board-eyebrow { color: var(--eyebrow); font-size: 8px; font-weight: 700; letter-spacing: 1.2px; }
   .board-sources-heading h2 { margin: 6px 0 5px; color: var(--text-heading); font-family: var(--interface-font); font-size: 18px; font-weight: 500; }
@@ -11694,8 +12088,8 @@
   .storyboard-empty-hint { position: absolute; top: 50%; left: 50%; width: min(300px, calc(100% - 32px)); margin: 0; color: var(--text-muted); font-size: 10px; line-height: 1.5; text-align: center; transform: translate(-50%, -50%); pointer-events: none; }
   .storyboard-pan-hint { margin: 8px 0 0; color: var(--text-muted); font-size: 8px; text-align: right; }
 
-  .settings-dialog { width: min(440px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 32px)); padding: 0; overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text-primary); box-shadow: var(--shadow-dialog); }
-  .research-markdown-dialog { width: min(820px, calc(100vw - 32px)); max-height: min(860px, calc(100vh - 32px)); }
+  .settings-dialog { width: min(440px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 32px)); max-height: min(680px, calc(100dvh - 32px)); padding: 0; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text-primary); box-shadow: var(--shadow-dialog); }
+  .research-markdown-dialog { width: min(820px, calc(100vw - 32px)); max-height: min(860px, calc(100vh - 32px)); max-height: min(860px, calc(100dvh - 32px)); }
   .research-markdown-content { overflow: auto; padding: 24px 32px 36px; color: var(--text-body); font-family: var(--writing-font, Georgia, serif); font-size: 15px; line-height: 1.8; overflow-wrap: anywhere; }
   .research-markdown-content :global(h1), .research-markdown-content :global(h2), .research-markdown-content :global(h3) { margin: 1.5em 0 .55em; color: var(--text-heading); font-family: var(--interface-font); line-height: 1.25; }
   .research-markdown-content :global(h1) { margin-top: 0; font-size: 1.8em; }
@@ -11713,10 +12107,10 @@
   .research-link-dialog form { margin: 0; }
   .starter-dialog form { margin: 0; }
   .starter-options { display: grid; gap: 6px; }
-  .starter-option { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--border-control); border-radius: 6px; cursor: pointer; }
+  .starter-option { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border-control); border-radius: 6px; cursor: pointer; }
   .starter-option.selected { border-color: var(--accent); background: var(--control-bg); }
-  .starter-option input { margin: 2px 0 0; accent-color: var(--accent); }
-  .starter-copy { display: grid; gap: 2px; }
+  .starter-option input { margin: 2px 0 0; flex: 0 0 auto; accent-color: var(--accent); }
+  .starter-copy { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
   .starter-copy strong { color: var(--text-heading); font-size: 11px; font-weight: 600; }
   .starter-copy span { color: var(--text-muted); font-size: 10px; line-height: 1.4; }
   .starter-dialog-actions { display: flex; align-items: center; gap: 8px; }
@@ -11727,23 +12121,23 @@
   .starter-dialog[open] { display: flex; flex-direction: column; }
   .starter-dialog form { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; max-height: inherit; }
   .starter-dialog .settings-body { min-height: 0; flex: 1 1 auto; overflow: hidden; }
-  .starter-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; gap: 20px; }
-  .starter-presets, .starter-customise { min-height: 0; overflow-y: auto; padding: 17px 0; }
+  .starter-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; gap: 20px; min-width: 0; }
+  .starter-presets, .starter-customise { min-width: 0; min-height: 0; overflow-y: auto; padding: 17px 0; }
   .starter-subheading { margin-top: 16px; }
   .starter-template { display: flex; align-items: center; gap: 6px; }
   .starter-template .starter-option { flex: 1; min-width: 0; }
   .starter-icon { display: grid; width: 22px; height: 22px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); cursor: pointer; }
   .starter-icon:hover { background: var(--hover-bg); color: var(--text-heading); }
-  .starter-modules { display: grid; gap: 7px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border-soft); }
-  .starter-modules-head { display: flex; align-items: baseline; gap: 7px; }
+  .starter-modules { display: grid; gap: 7px; min-width: 0; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border-soft); }
+  .starter-modules-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 7px; }
   .starter-modules-head strong { color: var(--text-heading); font-size: 11px; font-weight: 600; }
   .starter-modules-count { color: var(--text-muted); font-size: 10px; }
   .starter-clear { margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 10px; text-decoration: underline; text-underline-offset: 2px; }
   .starter-clear:hover { color: var(--text-heading); }
   .starter-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .starter-modules-hint { margin: 0; color: var(--text-muted); font-size: 10px; }
-  .starter-module-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
-  .starter-module { display: grid; gap: 3px; padding: 8px 9px; border: 1px solid var(--border-control); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+  .starter-module-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 6px; min-width: 0; }
+  .starter-module { display: grid; gap: 3px; min-width: 0; padding: 8px 9px; border: 1px solid var(--border-control); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
   .starter-module:hover { border-color: var(--accent); background: var(--hover-bg); }
   .starter-module.active { border-color: var(--accent); background: var(--selected-bg); }
   .starter-module:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -11763,7 +12157,7 @@
   .close-settings { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 20px; }
   .close-settings:hover { background: var(--hover-bg); color: var(--text-primary); }
   .settings-body { padding: 7px 25px 10px; }
-  .main-settings-dialog { width: min(860px, calc(100vw - 32px)); height: min(620px, calc(100vh - 32px)); max-height: calc(100vh - 32px); overflow: hidden; }
+  .main-settings-dialog { width: min(860px, calc(100vw - 32px)); height: min(620px, calc(100vh - 32px)); height: min(620px, calc(100dvh - 32px)); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow: hidden; }
   .main-settings-dialog[open] { display: flex; flex-direction: column; }
   .main-settings-dialog .settings-header, .main-settings-dialog .settings-footer { flex: 0 0 auto; }
   .settings-layout { display: flex; min-height: 0; flex: 1 1 auto; }
@@ -12094,9 +12488,11 @@
       margin-bottom: 14px;
       padding-top: calc(12px + env(safe-area-inset-top));
     }
-    .toolbar { top: calc(8px + env(safe-area-inset-top)); }
+    .editor-tools { top: calc(8px + env(safe-area-inset-top)); }
     .panel-toggles { margin-left: auto; }
     .panel-toggle span { display: none; }
+    /* Split view and keyboard shortcuts need a keyboard and wide screen, so hide those options on phones. */
+    .split-toggle, .shortcuts-toggle, .shortcuts-button, .about-shortcuts-button { display: none; }
     .storage-banner { align-items: flex-start; flex-direction: column; gap: 8px; }
     .storage-banner-actions { width: 100%; }
     .storage-banner .data-button { flex: 1; }
@@ -12132,13 +12528,20 @@
     .settings-dialog[open] { display: flex; flex-direction: column; }
     .settings-dialog > form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
     .settings-header { padding: calc(16px + env(safe-area-inset-top)) 18px 14px; }
-    .settings-body { min-height: 0; flex: 1; overflow-y: auto; padding: 4px 18px 12px; }
-    .settings-footer { padding: 12px 18px calc(12px + env(safe-area-inset-bottom)); }
-    .starter-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 0; }
-    .starter-dialog .settings-body { overflow-y: auto; }
-    .starter-presets, .starter-customise { overflow: visible; }
+    .settings-body { min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px 18px 12px; }
+    .settings-footer { flex-wrap: wrap; padding: 12px 18px calc(12px + env(safe-area-inset-bottom)); }
+    .starter-body { display: flex; flex-direction: column; gap: 0; align-items: stretch; min-width: 0; min-height: 0; }
+    .starter-dialog .settings-body { overflow-y: auto; overflow-x: hidden; }
+    .starter-presets, .starter-customise { flex: 0 0 auto; width: 100%; max-width: 100%; min-width: 0; min-height: 0; overflow: visible; }
     .starter-presets { padding-bottom: 0; }
     .starter-customise { padding-top: 12px; }
+    .starter-module-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); }
+    .starter-save { flex-wrap: wrap; }
+    .starter-save input[type="text"] { min-height: 40px; height: 40px; flex: 1 1 160px; }
+    .starter-add-button { min-height: 40px; height: 40px; }
+    .starter-cancel { min-height: 40px; }
+    .starter-dialog .settings-footer { gap: 8px; }
+    .starter-dialog-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
     .close-settings { width: 40px; height: 40px; }
     .research-markdown-dialog { width: 100vw; max-width: 100vw; }
     .research-markdown-dialog .research-markdown-content { min-height: 0; flex: 1; }
@@ -12151,7 +12554,10 @@
     .chapter-name-input,
     .note-folder-name-input,
     .goal-input,
-    .chapter-goal-input input { font-size: 16px; }
+    .chapter-goal-input input,
+    .label-filter-select,
+    .style-select,
+    .image-custom-width input { font-size: 16px; }
 
     .editor-content { font-size: calc(17px * var(--editor-scale)); line-height: 1.75; }
     .title-input { font-size: clamp(calc(30px * var(--editor-scale)), 9vw, calc(40px * var(--editor-scale))); }
@@ -12186,6 +12592,12 @@
     .editor-content { padding-top: 30px; }
     .toolbar { padding-right: 4px; padding-left: 4px; }
     .toolbar-divider { margin: 0 1px; }
+    .starter-module-grid { grid-template-columns: minmax(0, 1fr); }
+    .starter-save { flex-direction: column; align-items: stretch; }
+    .starter-save input[type="text"], .starter-add-button { width: 100%; flex: none; }
+    .starter-dialog .settings-footer > span { flex: 1 1 100%; }
+    .starter-dialog-actions { width: 100%; margin-left: 0; }
+    .starter-dialog-actions .starter-cancel, .starter-dialog-actions .done-button { flex: 1; min-height: 44px; }
   }
   /* Comfortable touch targets without changing the desktop visual density. */
   @media (pointer: coarse) {
@@ -12215,8 +12627,10 @@
     .source-drag-handle, .source-add { width: 36px; height: 36px; }
     .drawing-tool, .drawing-delete { min-height: 40px; font-size: 11px; }
     .drawing-move-handle { width: 36px; height: 32px; }
-    .drawing-resize-handle { width: 18px; height: 18px; }
+    .drawing-resize-handle { width: 24px; height: 24px; }
     .storyboard-card { width: 250px; }
+    /* iOS zooms the page when a focused control is smaller than 16px. */
+    .markdown-source-editor :global(.cm-editor) { font-size: max(16px, calc(13px * var(--editor-scale))); }
   }
   @media (prefers-reduced-motion: reduce) {
     .sidebar, .progress-sidebar { transition: none; }
@@ -12241,7 +12655,7 @@
   .app-shell.zen-hidden .workspace-controls,
   .app-shell.zen-hidden .sidebar,
   .app-shell.zen-hidden .title-input,
-  .app-shell.zen-hidden .toolbar,
+  .app-shell.zen-hidden .editor-tools,
   .app-shell.zen-hidden .markdown-utilities,
   .app-shell.zen-hidden .image-edit-toolbar,
   .app-shell.zen-hidden .image-insert-error,

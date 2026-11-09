@@ -99,6 +99,8 @@
     bind:this={titleInput}
     aria-label="Title"
     placeholder="Untitled"
+    autocapitalize="sentences"
+    enterkeyhint="done"
     value={titleValue}
     maxlength="120"
     oninput={(event) => {
@@ -124,8 +126,12 @@
 <style>
   .tile-editor { display: flex; min-width: 0; flex-direction: column; }
   .tile-title { width: 100%; margin: 0 0 10px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-heading); font-family: inherit; font-size: 15px; font-weight: 700; line-height: 1.3; }
+  @media (pointer: coarse) {
+    /* iOS zooms the page when a focused control is smaller than 16px. */
+    .tile-title { font-size: 16px; }
+  }
   .tile-title::placeholder { color: var(--text-faint); }
-  .tile-body { min-height: 120px; outline: none; color: var(--text-body); font-family: var(--writing-font, var(--interface-font)); font-size: calc(16px * var(--editor-scale)); line-height: 1.85; overflow-wrap: anywhere; }
+  .tile-body { min-height: 120px; outline: none; color: var(--text-body); font-family: var(--writing-font, var(--interface-font)); font-size: max(16px, calc(16px * var(--editor-scale))); line-height: 1.85; overflow-wrap: anywhere; }
   .tile-body :global(p) { margin: 0 0 18px; }
   .tile-body :global(h1) { color: var(--text-heading); font-size: calc(30px * var(--editor-scale)); font-weight: 500; line-height: 1.35; }
   .tile-body :global(h2) { margin: 0 0 19px; color: var(--text-heading); font-size: calc(24px * var(--editor-scale)); font-weight: 500; letter-spacing: -.5px; line-height: 1.4; }
@@ -134,6 +140,21 @@
   .tile-body :global(ul), .tile-body :global(ol) { padding-left: 24px; }
   .tile-body :global(a) { color: var(--link); text-decoration-color: var(--link-underline); text-underline-offset: 3px; }
   .tile-body :global(img) { display: block; max-width: 100%; height: auto; margin: 18px 0; object-fit: contain; }
+  .tile-body :global(img[data-size="small"]) { width: 25%; height: auto; max-width: 100%; }
+  .tile-body :global(img[data-size="medium"]) { width: 50%; height: auto; max-width: 100%; }
+  .tile-body :global(img[data-size="large"]) { width: 75%; height: auto; max-width: 100%; }
+  .tile-body :global(img[data-size="full"]) { width: 100%; height: auto; max-width: 100%; }
+  .tile-body :global(img[data-size="custom"]) { max-width: 100%; }
+  .tile-body :global(img[data-align="left"]) { margin-right: auto; }
+  .tile-body :global(img[data-align="center"]) { margin-right: auto; margin-left: auto; }
+  .tile-body :global(img[data-align="right"]) { margin-left: auto; }
+  .tile-body :global(img[data-wrap="wrap-left"]) { float: left; width: 50%; max-width: 50%; margin: 4px 18px 14px 0; }
+  .tile-body :global(img[data-wrap="wrap-right"]) { float: right; width: 50%; max-width: 50%; margin: 4px 0 14px 18px; }
+  .tile-body :global(img[data-wrap="wrap-left"][data-size="small"]),
+  .tile-body :global(img[data-wrap="wrap-right"][data-size="small"]) { width: 25%; max-width: 25%; }
+  .tile-body :global(h1), .tile-body :global(h2), .tile-body :global(h3),
+  .tile-body :global(blockquote), .tile-body :global(pre),
+  .tile-body :global(table), .tile-body :global(.scene-break) { clear: both; }
   .tile-body :global(pre) { overflow-x: auto; padding: 12px 14px; border-radius: 5px; background: var(--surface-raised); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; line-height: 1.55; }
   .tile-body :global(code) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
   .tile-body :global(table) { width: 100%; border-collapse: collapse; font-size: .9em; }
